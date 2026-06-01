@@ -4,9 +4,11 @@ import 'client.dart';
 import '../audio/provider.dart';
 import '../config.dart';
 import '../../services/firebase_service.dart';
+import '../../services/supabase_service.dart';
 import '../../services/http_service.dart';
 
 final firebaseServiceProvider = Provider((ref) => FirebaseService());
+final supabaseServiceProvider = Provider((ref) => SupabaseService());
 final httpServiceProvider = Provider((ref) => HttpService());
 
 class ActiveWebsiteUrlNotifier extends Notifier<String?> {
@@ -24,7 +26,7 @@ class GeminiLiveClientState {
   final bool isAgentSpeaking;
   final String userTranscript;
   final String modelTranscript;
-  final List<String> messages;
+  final List<Map<String, String>> history;
 
   GeminiLiveClientState({
     this.isConnected = false,
@@ -32,7 +34,7 @@ class GeminiLiveClientState {
     this.isAgentSpeaking = false,
     this.userTranscript = '',
     this.modelTranscript = '',
-    this.messages = const [],
+    this.history = const [],
   });
 
   GeminiLiveClientState copyWith({
@@ -41,7 +43,7 @@ class GeminiLiveClientState {
     bool? isAgentSpeaking,
     String? userTranscript,
     String? modelTranscript,
-    List<String>? messages,
+    List<Map<String, String>>? history,
   }) {
     return GeminiLiveClientState(
       isConnected: isConnected ?? this.isConnected,
@@ -49,7 +51,7 @@ class GeminiLiveClientState {
       isAgentSpeaking: isAgentSpeaking ?? this.isAgentSpeaking,
       userTranscript: userTranscript ?? this.userTranscript,
       modelTranscript: modelTranscript ?? this.modelTranscript,
-      messages: messages ?? this.messages,
+      history: history ?? this.history,
     );
   }
 }
@@ -63,7 +65,35 @@ class GeminiLiveClientNotifier extends Notifier<GeminiLiveClientState> implement
       apiKey: AppConfig.geminiApiKey,
       delegate: this,
     );
+    _loadHistory();
     return GeminiLiveClientState();
+  }
+
+  Future<void> _loadHistory() async {
+    final userId = ref.read(firebaseServiceProvider).currentUser?.uid;
+    if (userId == null) return;
+
+    try {
+      final supabase = ref.read(supabaseServiceProvider).client;
+      final response = await supabase
+          .from('messages')
+          .select('role, text')
+          .eq('user_id', userId)
+          .order('created_at', ascending: false)
+          .limit(20);
+
+      final List<Map<String, String>> loadedHistory = [];
+      for (var m in (response as List).reversed) {
+        loadedHistory.add({
+          'role': m['role'].toString().toUpperCase(),
+          'text': m['text'].toString(),
+        });
+      }
+
+      state = state.copyWith(history: loadedHistory);
+    } catch (e) {
+      print('Failed to load history in Flutter: $e');
+    }
   }
 
   Future<void> startSession({
@@ -75,11 +105,17 @@ class GeminiLiveClientNotifier extends Notifier<GeminiLiveClientState> implement
     await ref.read(audioRecorderProvider).start();
     await ref.read(ambientAudioProvider).start();
     
-    const String cafeInstruction = "Start naturally like the conversation is already happening at a cafe. Do not introduce yourself. Do not mention your name. Do not offer help. Use a small human beat if it fits, like 'Mm...' or 'Yeah...', then begin with a casual observation, small-talk thought, back-to-reality moment, or light current-topic style comment. Keep it calm and normal. Do not overuse fillers.";
+    String historyContext = "";
+    if (state.history.isNotEmpty) {
+      historyContext = "\n\nPREVIOUS CONVERSATION CONTEXT:\n" + 
+        state.history.map((m) => "${m['role']}: ${m['text']}").join("\n");
+    }
+
+    final String cafeInstruction = "Start naturally like the conversation is already happening at a cafe. Do not introduce yourself. Do not mention your name. Do not offer help. Use a small human beat if it fits, like 'Mm...' or 'Yeah...', then begin with a casual observation, small-talk thought, back-to-reality moment, or light current-topic style comment. Keep it calm and normal. Do not overuse fillers.";
 
     await _client.connect(
       voiceName: voiceName,
-      systemInstruction: systemInstruction ?? cafeInstruction,
+      systemInstruction: (systemInstruction ?? cafeInstruction) + historyContext,
       tools: tools,
     );
     
@@ -92,11 +128,22 @@ class GeminiLiveClientNotifier extends Notifier<GeminiLiveClientState> implement
     await ref.read(audioStreamerProvider).stop();
     await ref.read(ambientAudioProvider).stop();
     
-    state = GeminiLiveClientState();
+    // Preserve history but clear transient state
+    state = GeminiLiveClientState(history: state.history);
+    _loadHistory(); // Refresh from DB
   }
 
   void sendAudio(String base64) => _client.sendAudio(base64);
-  void sendText(String text) => _client.sendText(text);
+  void sendText(String text) {
+    _client.sendText(text);
+    _saveMessage('user', text);
+  }
+
+  Future<void> _saveMessage(String role, String text) async {
+    final userId = ref.read(firebaseServiceProvider).currentUser?.uid;
+    if (userId == null) return;
+    await ref.read(supabaseServiceProvider).saveMessage(userId: userId, role: role, text: text);
+  }
 
   @override
   void onSetupComplete() {
@@ -108,7 +155,6 @@ class GeminiLiveClientNotifier extends Notifier<GeminiLiveClientState> implement
     ref.read(audioStreamerProvider).addPCM16(base64);
     state = state.copyWith(isAgentSpeaking: true);
     
-    // Reset speaking state after a short delay if no more audio arrives
     Future.delayed(const Duration(milliseconds: 400), () {
       if (ref.exists(geminiLiveProvider)) {
         state = state.copyWith(isAgentSpeaking: false);
@@ -130,8 +176,10 @@ class GeminiLiveClientNotifier extends Notifier<GeminiLiveClientState> implement
   @override
   void onTurnComplete() {
     if (state.modelTranscript.isNotEmpty) {
+      final text = state.modelTranscript;
+      _saveMessage('model', text);
       state = state.copyWith(
-        messages: [...state.messages, 'ASSISTANT: ${state.modelTranscript}'],
+        history: [...state.history, {'role': 'MODEL', 'text': text}],
         modelTranscript: '',
       );
     }
@@ -149,7 +197,6 @@ class GeminiLiveClientNotifier extends Notifier<GeminiLiveClientState> implement
       }
     }
 
-    // Placeholder response
     final responses = functionCalls.map((call) => {
       'id': call['id'],
       'name': call['name'],
@@ -202,7 +249,6 @@ class GeminiLiveClientNotifier extends Notifier<GeminiLiveClientState> implement
 
       if (response['ok'] == true) {
         final url = '${AppConfig.backendUrl}${response['slug']}';
-        // Notify UI to show website viewer
         ref.read(activeWebsiteUrlProvider.notifier).url = url;
       }
     } catch (e) {
