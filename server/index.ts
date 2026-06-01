@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { supabase } from './supabase';
 import { WhatsAppManager } from './whatsapp';
 import * as waTools from './whatsapp-tools';
 import * as belgianTools from './belgian-tools';
@@ -310,6 +312,98 @@ app.post('/api/whatsapp/webhook/:userId', (req, res) => {
     res.json(waManager.ingestCloudWebhook(req.params.userId, req.body));
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Webhook ingest failed' });
+  }
+});
+
+// ── Web Architect (Website Builder) Routes ──
+
+app.post('/api/website/generate', async (req, res) => {
+  try {
+    const { userId, title, prompt, timestamp } = req.body;
+    if (!userId || !title || !prompt || !timestamp) {
+      res.status(400).json({ error: 'userId, title, prompt, and timestamp are required' });
+      return;
+    }
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+
+    const systemPrompt = `
+You are a senior frontend architect specializing in high-fidelity, premium landing pages and blogs.
+Generate exactly one complete standalone HTML document.
+The design must be ultra-modern, professional, and fully responsive (mobile-first).
+
+Design Language:
+- Theme: Premium Dark or Clean Minimalist (match the content intent).
+- Typography: Use Google Fonts (Inter, Playfair Display, or Montserrat).
+- UI Components: Smooth animations, polished cards, high-quality placeholders, and fluid transitions.
+- Layout: Modern grid systems, elegant spacing, and clear visual hierarchy.
+
+Hard Rules:
+- Return ONLY the raw HTML. Do not include markdown fences.
+- Start with <!DOCTYPE html>.
+- All CSS must be in a <style> tag.
+- All JS must be in a <script> tag.
+- No external dependencies except Google Fonts.
+- Do not mention HTML or Beatrice to the user.
+- Ensure the site looks like a high-end production site (inspired by premium themes).
+- Do not create apps that mimic the Beatrice platform or voice assistants.
+- Use Unsplash source URLs for realistic images related to the topic.
+- Include a clear footer and navigation.
+`;
+
+    const userPrompt = `
+Create a premium website/landing page.
+Title: ${title}
+Request: ${prompt}
+Timestamp: ${timestamp}
+`;
+
+    const genResult = await model.generateContent([systemPrompt, userPrompt]);
+    const htmlContent = genResult.response.text().trim().replace(/^```html/, '').replace(/```$/, '');
+
+    // Save to Supabase
+    const { error } = await supabase.from('websites').insert({
+      user_id: userId,
+      timestamp: timestamp,
+      html_content: htmlContent,
+      title: title
+    });
+
+    if (error) {
+      console.error('Supabase save error:', error);
+      res.status(500).json({ error: 'Failed to save generated site' });
+      return;
+    }
+
+    const slug = `/site-build/${userId}/${timestamp}`;
+    res.json({ ok: true, slug, title });
+
+  } catch (err: any) {
+    console.error('Website generation error:', err);
+    res.status(500).json({ error: err.message || 'Generation failed' });
+  }
+});
+
+app.get('/site-build/:userId/:timestamp', async (req, res) => {
+  try {
+    const { userId, timestamp } = req.params;
+    const { data, error } = await supabase
+      .from('websites')
+      .select('html_content')
+      .eq('user_id', userId)
+      .eq('timestamp', timestamp)
+      .single();
+
+    if (error || !data) {
+      res.status(404).send('<h1>404 - Website not found</h1><p>The link may have expired or is incorrect.</p>');
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(data.html_content);
+  } catch (err: any) {
+    res.status(500).send('Internal Server Error');
   }
 });
 

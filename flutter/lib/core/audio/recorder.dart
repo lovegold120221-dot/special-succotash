@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:math' as math;
 import 'package:record/record.dart';
 
 class AudioRecorderService {
@@ -8,6 +9,9 @@ class AudioRecorderService {
   StreamSubscription? _subscription;
   final Function(String base64) onData;
   final Function(List<double> frequencies) onFrequencies;
+
+  // Internal state for smoothing
+  List<double> _previousBins = List.filled(11, 0.0);
 
   AudioRecorderService({required this.onData, required this.onFrequencies});
 
@@ -25,21 +29,36 @@ class AudioRecorderService {
       final stream = await _recorder.startStream(config);
       
       _subscription = stream.listen((data) {
-        // Enhance Mic: Apply software gain boost (x1.5)
-        final enhancedData = _applyGain(data, 1.5);
+        // Robust Mic: Apply strong software gain boost (x2.2) and noise floor handling
+        final enhancedData = _applyRobustGain(data, 2.2);
         
         onData(base64Encode(enhancedData));
-        onFrequencies(_calculateFrequencies(enhancedData));
+        
+        // Realtime Visualization: Improved bin calculation
+        final currentBins = _calculateFrequencies(enhancedData);
+        _previousBins = List.generate(11, (i) => _previousBins[i] * 0.4 + currentBins[i] * 0.6);
+        onFrequencies(_previousBins);
       });
     }
   }
 
-  Uint8List _applyGain(Uint8List data, double gain) {
+  Uint8List _applyRobustGain(Uint8List data, double gain) {
     final Int16List samples = Int16List.view(data.buffer);
     final Int16List result = Int16List(samples.length);
     
+    // Simple noise floor (absolute threshold)
+    const int noiseFloor = 150;
+
     for (int i = 0; i < samples.length; i++) {
-      int value = (samples[i] * gain).round();
+      int raw = samples[i];
+      
+      // Basic noise gate
+      if (raw.abs() < noiseFloor) {
+        result[i] = 0;
+        continue;
+      }
+
+      int value = (raw * gain).round();
       // Clamp to Int16 limits
       if (value > 32767) value = 32767;
       if (value < -32768) value = -32768;
@@ -59,15 +78,21 @@ class AudioRecorderService {
     final view = ByteData.view(data.buffer);
     
     for (int i = 0; i < 11; i++) {
-      double sum = 0;
+      double sumOfSquares = 0;
       for (int j = 0; j < samplesPerBin; j++) {
         final index = (i * samplesPerBin + j) * 2;
         if (index + 1 < data.length) {
-          final sample = view.getInt16(index, Endian.little).abs();
-          sum += sample / 32768.0;
+          final double sample = view.getInt16(index, Endian.little) / 32768.0;
+          sumOfSquares += sample * sample;
         }
       }
-      bins[i] = (sum / samplesPerBin).clamp(0.0, 1.0);
+      
+      // Calculate RMS (Root Mean Square) for more "robust" volume detection
+      double rms = math.sqrt(sumOfSquares / samplesPerBin);
+      
+      // Dynamic Range Compression: boost lower signals for visualizer energy
+      // y = x^(1/2) makes smaller movements more visible
+      bins[i] = math.pow(rms, 0.5).toDouble().clamp(0.0, 1.0);
     }
     return bins;
   }
@@ -75,6 +100,7 @@ class AudioRecorderService {
   Future<void> stop() async {
     await _subscription?.cancel();
     await _recorder.stop();
+    _previousBins = List.filled(11, 0.0);
   }
 
   void dispose() {

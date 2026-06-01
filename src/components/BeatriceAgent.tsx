@@ -13,6 +13,7 @@ import { saveOutput, uploadToDrive } from '../lib/workspace';
 import { ChatPage } from './ChatPage';
 import { VideoPage } from './VideoPage';
 import { DocumentViewer } from './DocumentViewer';
+import { WebsiteViewer } from './WebsiteViewer';
 import { ProfilePage } from './ProfilePage';
 import { WhatsAppSettings } from './WhatsAppSettings';
 import { startWhatsAppPairing, getWhatsAppStatus, disconnectWhatsApp } from '../lib/whatsappClient';
@@ -773,6 +774,8 @@ export function BeatriceAgent({
   const [showSettings, setShowSettings] = useState(false);
   const [showDocumentViewer, setShowDocumentViewer] = useState(false);
   const [activeDocumentResultId, setActiveDocumentResultId] = useState<string | null>(null);
+  const [showWebsiteViewer, setShowWebsiteViewer] = useState(false);
+  const [activeWebsiteUrl, setActiveWebsiteUrl] = useState<string | null>(null);
   const [personaName, setPersonaName] = useState("Beatrice");
   const [customPrompt, setCustomPrompt] = useState("");
   const [selectedVoice, setSelectedVoice] = useState("Aoede");
@@ -2593,6 +2596,18 @@ ${historyContext}
                   }
                 },
                 {
+                  name: "create_website",
+                  description: "Create a professional, high-fidelity landing page or blog. This tool generates a premium, fully responsive (mobile-first) website based on your description. The site will be hosted on a unique shareable link. hard rule — do not create apps that mimic the Beatrice platform or voice assistants.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      title: { type: Type.STRING, description: "The title of the website (e.g., 'Eco-Luxe Interior Design' or 'Modern Tech Blog')." },
+                      prompt: { type: Type.STRING, description: "Detailed description of the site's content, sections, visual style (e.g., dark mode, minimalist), and purpose." }
+                    },
+                    required: ["title", "prompt"]
+                  }
+                },
+                {
                   name: "dial_contact",
                    description: "Dial a phone number from the user's phonebook using the native phone dialer. This opens the system phone app with the number pre-filled so the user can tap to call. Use this when the user asks you to call someone (e.g., while driving, hands-free). Requires make_calls permission enabled in settings.",
                   parameters: {
@@ -3214,6 +3229,52 @@ ${historyContext}
                         }
                       } catch (e: any) {
                         result = { error: `Failed to open Google sign-in: ${e.message}` };
+                      }
+                    } else if (callName === 'create_website') {
+                      const args = call.args as any;
+                      const title = String(args.title || 'Website');
+                      const prompt = String(args.prompt || 'Create a premium website.');
+                      const timestamp = Date.now().toString();
+                      const generationTaskId = taskId;
+
+                      try {
+                        setTasks(prev => [...prev, { id: generationTaskId, serviceName: 'Web Architect', action: 'building', status: 'processing', startTime: Date.now() }]);
+
+                        // Background generation via backend
+                        (async () => {
+                          try {
+                            const response = await fetch(`${process.env.VITE_SANDBOX_URL || 'https://whatsapp.eburon.ai'}/api/website/generate`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                userId: user.uid,
+                                title,
+                                prompt,
+                                timestamp
+                              })
+                            });
+                            const data = await response.json();
+                            if (data.ok) {
+                              setActiveWebsiteUrl(`${process.env.VITE_SANDBOX_URL || 'https://whatsapp.eburon.ai'}${data.slug}`);
+                              setShowWebsiteViewer(true);
+                              setTasks(prev => prev.map(t => (t.id === generationTaskId ? { ...t, status: 'completed' } : t)));
+                              setTimeout(() => setTasks(prev => prev.filter(t => t.id !== generationTaskId)), 8000);
+                            } else {
+                              throw new Error(data.error || 'Generation failed');
+                            }
+                          } catch (e: any) {
+                            setTasks(prev => prev.map(t => (t.id === generationTaskId ? { ...t, status: 'error' } : t)));
+                          }
+                        })();
+
+                        result = {
+                          ok: true,
+                          title,
+                          message: "Website architecture is being drafted. It will be live on a secure link in a few seconds.",
+                          status: 'drafting',
+                        };
+                      } catch (e: any) {
+                        result = { error: e?.message || 'Website generation failed.' };
                       }
                     } else if (callName === 'dial_contact') {
                       const args = call.args as any;
