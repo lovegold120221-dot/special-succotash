@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:math' as math;
 import 'package:record/record.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class AudioRecorderService {
   final AudioRecorder _recorder = AudioRecorder();
@@ -16,29 +17,45 @@ class AudioRecorderService {
   AudioRecorderService({required this.onData, required this.onFrequencies});
 
   Future<void> start() async {
-    if (await _recorder.hasPermission()) {
-      final config = const RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
-        sampleRate: 16000,
-        numChannels: 1,
-        autoGain: true,
-        echoCancel: true,
-        noiseSuppress: true,
-      );
+    try {
+      // Explicitly request microphone permission using permission_handler for Android reliability
+      final status = await Permission.microphone.request();
+      if (!status.isGranted) {
+        print('Microphone permission denied');
+        return;
+      }
 
-      final stream = await _recorder.startStream(config);
-      
-      _subscription = stream.listen((data) {
-        // Robust Mic: Apply strong software gain boost (x2.2) and noise floor handling
-        final enhancedData = _applyRobustGain(data, 2.2);
+      // Final check with record package
+      if (await _recorder.hasPermission()) {
+        final config = const RecordConfig(
+          encoder: AudioEncoder.pcm16bits,
+          sampleRate: 16000,
+          numChannels: 1,
+          autoGain: true,
+          echoCancel: true,
+          noiseSuppress: true,
+        );
+
+        final stream = await _recorder.startStream(config);
         
-        onData(base64Encode(enhancedData));
-        
-        // Realtime Visualization: Improved bin calculation
-        final currentBins = _calculateFrequencies(enhancedData);
-        _previousBins = List.generate(11, (i) => _previousBins[i] * 0.4 + currentBins[i] * 0.6);
-        onFrequencies(_previousBins);
-      });
+        _subscription = stream.listen((data) {
+          // Robust Mic: Apply strong software gain boost (x2.5) and lowered noise floor (30)
+          final enhancedData = _applyRobustGain(data, 2.5);
+          
+          onData(base64Encode(enhancedData));
+          
+          // Realtime Visualization: Improved bin calculation
+          final currentBins = _calculateFrequencies(enhancedData);
+          _previousBins = List.generate(11, (i) => _previousBins[i] * 0.4 + currentBins[i] * 0.6);
+          onFrequencies(_previousBins);
+        }, onError: (err) {
+          print('Audio Stream Error: $err');
+        });
+      } else {
+        print('Recorder hasPermission returned false after system prompt');
+      }
+    } catch (e) {
+      print('Failed to start recording: $e');
     }
   }
 
@@ -46,8 +63,8 @@ class AudioRecorderService {
     final Int16List samples = Int16List.view(data.buffer);
     final Int16List result = Int16List(samples.length);
     
-    // Simple noise floor (absolute threshold)
-    const int noiseFloor = 150;
+    // Lowered noise floor to 30 to catch faint voices
+    const int noiseFloor = 30;
 
     for (int i = 0; i < samples.length; i++) {
       int raw = samples[i];
@@ -87,12 +104,10 @@ class AudioRecorderService {
         }
       }
       
-      // Calculate RMS (Root Mean Square) for more "robust" volume detection
       double rms = math.sqrt(sumOfSquares / samplesPerBin);
       
       // Dynamic Range Compression: boost lower signals for visualizer energy
-      // y = x^(1/2) makes smaller movements more visible
-      bins[i] = math.pow(rms, 0.5).toDouble().clamp(0.0, 1.0);
+      bins[i] = math.pow(rms, 0.4).toDouble().clamp(0.0, 1.0);
     }
     return bins;
   }

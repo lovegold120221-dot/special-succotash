@@ -1,5 +1,5 @@
 class AppConfig {
-  static const String geminiApiKey = 'AIzaSyDGMO7mmbV-pWb8qbjtTL4M7Mre9hQIftk';
+  static const String geminiApiKey = String.fromEnvironment('GEMINI_API_KEY', defaultValue: 'REPLACE_ME');
   static const String supabaseUrl = 'https://inypxifrayeafrlhkulz.supabase.co';
   static const String supabaseKey = 'sb_publishable_56i_nBVgtiqsK4YebBT7TQ_oUVY3oYT';
   static const String backendUrl = 'https://whatsapp.eburon.ai';
