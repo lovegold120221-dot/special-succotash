@@ -37,8 +37,36 @@ export function VideoPage({
   const [isSharingScreen, setIsSharingScreen] = useState(false);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const screenIntervalRef = useRef<any>(null);
+  const wakeLockRef = useRef<any>(null);
   const [elapsed, setElapsed] = useState(0);
   const isRecording = isCameraActive || isSharingScreen;
+
+  const requestWakeLock = async () => {
+    if ('wakeLock' in navigator) {
+      try {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+      } catch (err) {
+        console.warn('Wake Lock request failed:', err);
+      }
+    }
+  };
+
+  const releaseWakeLock = () => {
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release().then(() => {
+        wakeLockRef.current = null;
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (isRecording) {
+      requestWakeLock();
+    } else {
+      releaseWakeLock();
+    }
+    return () => releaseWakeLock();
+  }, [isRecording]);
 
   useEffect(() => {
     if (localVideoRef.current && cameraStream && !isSharingScreen) {
