@@ -6,8 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+!.env.whatsapp.example
 
 client.json
-.env
 
 .baileys_auth/

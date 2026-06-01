@@ -80,7 +80,7 @@ class GeminiLiveClientNotifier extends Notifier<GeminiLiveClientState> implement
           .select('role, text')
           .eq('user_id', userId)
           .order('created_at', ascending: false)
-          .limit(20);
+          .limit(50);
 
       final List<Map<String, String>> loadedHistory = [];
       for (var m in (response as List).reversed) {

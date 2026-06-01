@@ -16,7 +16,7 @@ import { DocumentViewer } from './DocumentViewer';
 import { WebsiteViewer } from './WebsiteViewer';
 import { ProfilePage } from './ProfilePage';
 import { WhatsAppSettings } from './WhatsAppSettings';
-import { startWhatsAppPairing, getWhatsAppStatus, disconnectWhatsApp } from '../lib/whatsappClient';
+import { startWhatsAppPairing, getWhatsAppStatus, disconnectWhatsApp, getBackendUrl } from '../lib/whatsappClient';
 import { webGlance } from '../lib/webClient';
 import { isGoogleLinked } from './EntryFlow';
 
@@ -28,6 +28,24 @@ function jidDigits(jid: string): string {
 function formatPhone(digits: string): string {
   const clean = (digits || '').replace(/\D/g, '');
   return clean ? `+${clean}` : '';
+}
+
+const OUTBOUND_WHATSAPP_ACTIONS = new Set([
+  'sendMessage',
+  'sendGroupMessage',
+  'sendMedia',
+  'sendAudio',
+  'sendReaction',
+  'sendButtons',
+]);
+
+function isOutboundWhatsAppAction(action: unknown): boolean {
+  return OUTBOUND_WHATSAPP_ACTIONS.has(String(action || ''));
+}
+
+function isExplicitWhatsAppSendApproval(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/[.!?]+$/g, '');
+  return normalized === 'send' || normalized === 'approved';
 }
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -184,8 +202,8 @@ BOSS/ASSISTANT DYNAMIC:
 - Although you are conversational and relaxed, you recognize the user as your "Boss".
 - You are currently helping your Boss while you chat.
 - ⚠️ CRITICAL: NEVER call ANY tool unless the user explicitly and directly asked for it. Do NOT call tools proactively, preemptively, "just in case," or because you think it might be helpful. If the user is silent, talking about something unrelated to a tool's function, or you are filling silence — do NOT call tools. Only call tools in direct response to a specific user request. If the user is watching a video, browsing, or doing anything that doesn't involve a direct ask — keep your mouth shut and do nothing.
-- When you execute a tool, do not stop the conversation. Mention it normally. The user asking you to do something IS their permission — execute immediately. Do NOT ask "may I?" or "do you want me to?" or "shall I?" after they already told you to do it. Just do it and tell them you're doing it.
-- EXCEPTION — Only ask confirmation for destructive actions: deleting emails, deleting calendar events, deleting files. For sending messages via WhatsApp when the user explicitly provides the message content and recipient, execute immediately — the user's request is permission enough. For read-only actions (reading chats, checking contacts, listing emails, viewing calendar), execute immediately — the user's request is permission enough.
+- When you execute a non-send tool, do not stop the conversation. Mention it normally. The user asking you to read/check/list something IS their permission — execute immediately for read-only actions. Do NOT ask "may I?" after they already asked for a read-only action.
+- EXCEPTION — Always ask confirmation for destructive actions and outbound sends: deleting emails, deleting calendar events, deleting files, sending emails, and sending WhatsApp messages. For WhatsApp sends, the initial request is only permission to prepare a preview, not permission to send. For read-only actions (reading chats, checking contacts, listing emails, viewing calendar), execute immediately.
 - NEVER simulate, fake, or pretend to execute a tool. If you have a tool available for what the user asked, call the real tool with real parameters. Do not describe what you would hypothetically do — do it. Do not say "I can check that for you" — just check it.
 - Use phrases like "Let me scan that for you...", "I can pull up your calendar if you want...", "Wait, let me just finish this draft for you...", or "I'm looking at the screen now...".
 - Integrate the work into your conversational flow.
@@ -262,17 +280,17 @@ History 1 — "BeatriceAppConversations History" (your past conversations with t
 - This is YOUR relationship memory with the user inside this app. It is NOT their WhatsApp history.
 
 History 2 — "WhatsApp History" (the user's real WhatsApp conversations with other people on their phone):
-- This is fetched by calling the getMessageHistory tool — it reads from the WhatsApp server (whatsapp.eburon.ai), NOT from this app's database.
+- This is fetched by calling the getMessageHistory tool — it reads from the configured WhatsApp backend server, NOT from this app's database.
 - It shows the user's actual WhatsApp messages with their contacts — including the user's own outgoing messages (fromMe:true) and replies from others (fromMe:false).
 - Use THIS ONLY when the user asks you to send a WhatsApp message on their behalf to one of their contacts.
 - Read it to learn how the user naturally chats on WhatsApp — their real WhatsApp style, abbreviations, emoji use, tone, and language.
 
 CRITICAL RULES — READ CAREFULLY:
 - When YOU are talking directly to the user in this Beatrice app: Use the BeatriceAppConversations History (History 1) for context and memory. Do NOT read WhatsApp History to know how to talk to the user.
-- When the user asks you to send a WhatsApp message for them: Use getMessageHistory (History 2 — WhatsApp History) to learn the user's WhatsApp style with that person, then write the message in THAT exact style.
+- When the user asks you to send a WhatsApp message for them: Use getMessageHistory (History 2 — WhatsApp History) with limit 2000 to learn the user's WhatsApp style with that person, then write the message in THAT exact style. Prioritize messages where fromMe:true because those are the user's own outgoing WhatsApp messages.
 - When the user asks you to read their WhatsApp, check their chats, find a contact, or show them WhatsApp data: Call the real whatsapp_action tool immediately. Do not describe what you would do — execute the tool.
 - NEVER mix the two. BeatriceAppConversations History is for YOUR conversations with the user. WhatsApp History is for the user's conversations with OTHER people on WhatsApp.
-- When the user asks you to WhatsApp someone, use getMessageHistory to study their WhatsApp style, then compose in THAT style — NOT your own voice, NOT the style from BeatriceAppConversations History.
+- When the user asks you to WhatsApp someone, use getMessageHistory with limit 2000 to study their WhatsApp style, then compose in THAT style, show the preview, and wait for SEND before sending — NOT your own voice, NOT the style from BeatriceAppConversations History.
 
 DEFAULT VIBE:
 - calm
@@ -782,7 +800,7 @@ export function BeatriceAgent({
   const [themePreference, setThemePreference] = useState<'system' | 'light' | 'dark'>(() => {
     try { return (localStorage.getItem('beatrice_theme') as any) || 'system'; } catch { return 'system'; }
   });
-  const [contextSize, setContextSize] = useState(20);
+  const [contextSize, setContextSize] = useState(50);
   const [userTitle, setUserTitle] = useState(() => {
     try { return localStorage.getItem('beatrice_userTitle') || 'Boss'; } catch { return 'Boss'; }
   });
@@ -868,6 +886,7 @@ export function BeatriceAgent({
 
   const userTranscriptRef = useRef<string>('');
   const modelTranscriptRef = useRef<string>('');
+  const lastUserUtteranceRef = useRef<string>('');
   const transcriptTimeoutRef = useRef<any>(null);
   const speakingTimeoutRef = useRef<any>(null);
   const isActiveRef = useRef(false);
@@ -1354,6 +1373,7 @@ export function BeatriceAgent({
     audioStreamerRef.current?.stop();
     setIsAgentSpeaking(false);
     markUserSpeechActivity();
+    lastUserUtteranceRef.current = text;
     userTranscriptRef.current = text;
     setUserTranscript(text);
     setMessages(prev => [...prev, { role: 'user', text, timestamp: new Date().toISOString(), sessionId: sessionIdRef.current }]);
@@ -1634,7 +1654,8 @@ export function BeatriceAgent({
         .from('messages')
         .select('*')
         .eq('user_id', user.uid)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(contextSize);
 
       if (loadError) {
         handleDbError(loadError, 'messages', 'list');
@@ -2019,15 +2040,29 @@ WHATSAPP OWNER IDENTITY & ADDRESSING RULES:
 
 MASTER E PROTOCOL (WhatsApp Confirmation):
 When the user asks you to send a WhatsApp message, you MUST:
-1. Extract the recipient name, recipient WhatsApp number or chatId, final message text, and the intent (personal, business, urgent).
-2. Show this EXACT confirmation spoken and written:
+1. Prepare the message first. Extract the current userId, recipient name, recipient WhatsApp JID/phone/contact name, final message text, and whether the user has approved sending.
+2. Never invent a recipient. If the recipient is not known, use getContacts or ask for the exact recipient before previewing.
+3. Show this EXACT confirmation spoken and written:
    "Send this WhatsApp message to [recipient]?
    [message]
    Reply SEND to approve."
-3. ONLY call the whatsapp_action tool if the user explicitly replies with "SEND" or "Approved".
-4. Never send private, emotional, financial, legal, or sensitive messages without this explicit approval.
-5. Never invent a recipient.
-6. Always return the backend delivery result to the user.
+4. ONLY after the user explicitly replies "SEND" or "Approved", call whatsapp_action with action "sendMessage" and params:
+   {
+     "userId": "${user.uid}",
+     "tool": "sendMessage",
+     "params": {
+       "to": "[recipient chatId or phone]",
+       "text": "[final approved message]"
+     },
+     "permissions": {
+       "requireUserApproval": true,
+       "approvedByUser": true,
+       "mode": "delegated_send"
+     }
+   }
+5. Never change the approved message.
+6. Never send without approval unless the message belongs to a pre-approved automation rule.
+7. Always return the backend delivery result to the user.
 
 PUBLIC WEB GLANCE RULE:
 You may use the web_glance tool for public, non-private topics when the user explicitly asks for web/current context. Do NOT call this or any other tool during silence fillers, or when idle.
@@ -2593,17 +2628,24 @@ ${historyContext}
                 },
                 {
                   name: "whatsapp_action",
-                    description: "Execute real WhatsApp operations via the WhatsApp backend (whatsapp.eburon.ai). ONLY call this when the user has expressed a clear, direct intent to perform a specific WhatsApp operation (e.g., reading chats, sending a message, finding a contact). The user's direct request IS your permission. Only actions the user has enabled in their permission toggles will work.",
+                    description: "Execute real WhatsApp operations via the configured WhatsApp backend. ONLY call this when the user has expressed a clear, direct intent to perform a specific WhatsApp operation. Read-only actions may run immediately when requested. Outbound actions (sendMessage, sendGroupMessage, sendMedia, sendAudio, sendReaction, sendButtons) may ONLY be called after you showed the preview and the latest user reply was exactly SEND or Approved. Only actions enabled in permission toggles will work.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
-                       action: { type: Type.STRING, description: "The WhatsApp action: sendMessage, readChats, getContacts, addContact, getGroups, sendGroupMessage, readGroupChat, getMessageHistory, getCalls. IMPORTANT: For getContacts, 'getContacts' returns contacts with TWO name fields for each person: 'name' is what the user saved the contact as in their phonebook, and 'notify' is the contact's own public WhatsApp profile name (what they call themselves, also called pushName). Always show BOTH names when listing contacts. For readChats, getMessageHistory, and getCalls: messages/calls include a 'fromMe' boolean field: true means the current user (you, Beatrice) sent it/made the call, false means the other person/contact sent it/received the call." },
+                       action: { type: Type.STRING, description: "The WhatsApp action: readChats, getContacts, getGroups, getMessageHistory, getCalls, sendMessage, sendGroupMessage, sendMedia, sendAudio, sendReaction, sendButtons. IMPORTANT: For getContacts, contacts include savedName/name and whatsappProfileName/notify. Always show BOTH names when listing contacts. For readChats, getMessageHistory, and getCalls: messages/calls include a fromMe boolean field." },
                        to: { type: Type.STRING, description: "Recipient JID (e.g., 1234567890@s.whatsapp.net) or international phone number (e.g., 447700900000). CRITICAL: Always include the country code. If the user provides a local number, you MUST prepend the country code from their own WhatsApp number (waPhone). Prefer using the full JID found in getContacts." },
 
-                       text: { type: Type.STRING, description: "Message text (for sendMessage, sendGroupMessage). IMPORTANT — Before sending, you MUST first call getMessageHistory to read the user's WhatsApp History (their real WhatsApp conversations from the WhatsApp server — NOT the BeatriceAppConversations History). Look for messages with fromMe:true — those are the user's own outgoing WhatsApp messages. Analyze their real WhatsApp style: tone, abbreviations, emoji, punctuation, caps, language mixing, length, and how they talk to that person. Then write in THAT exact style. NEVER write in your own voice — become the user's WhatsApp voice." },
+                       text: { type: Type.STRING, description: "Message text (for sendMessage, sendGroupMessage, sendButtons). IMPORTANT — Before previewing a WhatsApp send, first call getMessageHistory with limit 2000 to read the user's real WhatsApp history with that recipient. Look for messages with fromMe:true and write in that user's WhatsApp style. After the user approves, send EXACTLY the previewed text without changes." },
                        mediaUrl: { type: Type.STRING, description: "URL of the media attachment to send (if any). Required if mediaType is provided." },
                        mediaType: { type: Type.STRING, description: "Type of media attachment (image, video, or document)." },
+                       url: { type: Type.STRING, description: "OpenAPI-compatible media/audio URL for sendMedia or sendAudio." },
+                       type: { type: Type.STRING, description: "OpenAPI-compatible media type: image, video, or document." },
                        caption: { type: Type.STRING, description: "Caption for the media attachment." },
+                       ptt: { type: Type.BOOLEAN, description: "For sendAudio: true to send as push-to-talk voice note." },
+                       messageId: { type: Type.STRING, description: "For sendReaction: ID of the message to react to." },
+                       emoji: { type: Type.STRING, description: "For sendReaction: emoji reaction to send." },
+                       buttons: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { id: { type: Type.STRING }, text: { type: Type.STRING } } }, description: "For sendButtons: button choices with id and text." },
+                       footer: { type: Type.STRING, description: "For sendButtons: optional footer text." },
                       name: { type: Type.STRING, description: "Contact/group name (for addContact, getMessageHistory). For addContact: Baileys/WhatsApp Web does NOT support adding contacts — it will return an error. Tell the user to save the contact on their phone instead." },
 
                       number: { type: Type.STRING, description: "Contact phone number (for addContact)" },
@@ -2611,7 +2653,7 @@ ${historyContext}
                       groupId: { type: Type.STRING, description: "Group JID ending in @g.us (for sendGroupMessage, readGroupChat)" },
                       groupName: { type: Type.STRING, description: "Group identifier if the exact group JID is known" },
                       contactId: { type: Type.STRING, description: "Contact JID or phone number (for getMessageHistory)" },
-                      limit: { type: Type.NUMBER, description: "Maximum records to return. Maximum 50." }
+                      limit: { type: Type.NUMBER, description: "Maximum records to return. Use 2000 for getMessageHistory when learning the user's WhatsApp style before sending." }
                     },
                     required: ["action"]
                   }
@@ -3165,22 +3207,43 @@ ${historyContext}
                       const args = call.args as any;
                       try {
                         const { callWhatsAppTool } = await import('../lib/whatsappClient');
-                        result = await callWhatsAppTool(user.uid, args.action, {
-                          to: args.to,
-                          text: args.text,
-                          name: args.name,
-                          number: args.number,
-                          groupId: args.groupId,
-                          groupName: args.groupName,
-                          chatId: args.chatId,
-                          contactId: args.contactId,
-                          limit: args.limit,
-                        }, {
-                          ...waPermissions,
-                          requireUserApproval: true,
-                          approvedByUser: true,
-                          mode: 'delegated_send'
-                        });
+                        const action = String(args.action || '');
+                        const isOutboundSend = isOutboundWhatsAppAction(action);
+                        const approvedByUser = isExplicitWhatsAppSendApproval(lastUserUtteranceRef.current);
+
+                        if (isOutboundSend && !approvedByUser) {
+                          result = {
+                            ok: false,
+                            error: 'WhatsApp delegated-send blocked: show the message preview first and wait for the user to reply SEND.',
+                          };
+                        } else {
+                          result = await callWhatsAppTool(user.uid, action, {
+                            to: args.to,
+                            text: args.text,
+                            name: args.name,
+                            number: args.number,
+                            groupId: args.groupId,
+                            groupName: args.groupName,
+                            chatId: args.chatId,
+                            contactId: args.contactId,
+                            limit: args.limit,
+                            url: args.url || args.mediaUrl,
+                            type: args.type || args.mediaType,
+                            mediaUrl: args.mediaUrl || args.url,
+                            mediaType: args.mediaType || args.type,
+                            caption: args.caption,
+                            ptt: args.ptt,
+                            messageId: args.messageId,
+                            emoji: args.emoji,
+                            buttons: args.buttons,
+                            footer: args.footer,
+                          }, isOutboundSend ? {
+                            ...waPermissions,
+                            requireUserApproval: true,
+                            approvedByUser: true,
+                            mode: 'delegated_send',
+                          } : waPermissions);
+                        }
                       } catch (e: any) {
                         result = { ok: false, error: e.message || 'WhatsApp action failed' };
                       }
@@ -3269,7 +3332,8 @@ ${historyContext}
                         // Background generation via backend
                         (async () => {
                           try {
-                            const response = await fetch(`${process.env.VITE_SANDBOX_URL || 'https://whatsapp.eburon.ai'}/api/website/generate`, {
+                            const backendUrl = getBackendUrl();
+                            const response = await fetch(`${backendUrl}/api/website/generate`, {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({
@@ -3281,7 +3345,7 @@ ${historyContext}
                             });
                             const data = await response.json();
                             if (data.ok) {
-                              setActiveWebsiteUrl(`${process.env.VITE_SANDBOX_URL || 'https://whatsapp.eburon.ai'}${data.slug}`);
+                              setActiveWebsiteUrl(`${backendUrl}${data.slug}`);
                               setShowWebsiteViewer(true);
                               setTasks(prev => prev.map(t => (t.id === generationTaskId ? { ...t, status: 'completed' } : t)));
                               setTimeout(() => setTasks(prev => prev.filter(t => t.id !== generationTaskId)), 8000);
@@ -3412,6 +3476,7 @@ ${historyContext}
                   audioStreamerRef.current?.stop();
                   setIsAgentSpeaking(false);
                   markUserSpeechActivity();
+                  lastUserUtteranceRef.current = text;
                   userTranscriptRef.current = text;
                   setUserTranscript(text);
                   conversationBufferRef.current.push(`USER: ${text}`);
@@ -3480,6 +3545,7 @@ ${historyContext}
 
                 if (text) {
                   markUserSpeechActivity();
+                  lastUserUtteranceRef.current = text;
                   userTranscriptRef.current = text;
                   setUserTranscript(text);
                   saveMessage('user', text);

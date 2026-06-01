@@ -44,21 +44,28 @@ Voxx-Zero comes pre-integrated with 10 high-value, market-specific skills:
 
 ## Deployment
 
-Voxx-Zero is pre-configured to be deployed easily using **Vercel**. 
-The repository includes a `vercel.json` file for proper Single-Page Application (SPA) routing. 
-
-When deploying the frontend to Vercel, the app automatically detects the production environment and routes backend API requests (for WhatsApp and Belgian Tools) to the designated production backend API url: `https://whatsapp.eburon.ai`. 
-
-*No manual environment variable configuration is required for the API URL in production.*
+Voxx-Zero's frontend can still be deployed with Vercel, but the WhatsApp backend is intended to run as a separate Docker service. Do not rely on the old hosted VPS URL. Run the backend locally or on your own host, then expose port `4200` with ngrok when a public callback/API URL is needed.
 
 ## WhatsApp Backend Server
 
 Voxx-Zero includes an advanced WhatsApp integration using `@whiskeysockets/baileys`. 
 
 *   **Local Backend:** Run `npm run dev:api` to start the local API on `http://localhost:4200`.
+*   **Docker Backend:** Copy `.env.whatsapp.example` to `.env.whatsapp`, then run `npm run docker:whatsapp:up`.
+*   **Health Check:** Run `npm run smoke:whatsapp` or open `http://localhost:4200/api/health`.
+*   **ngrok:** Run `ngrok http 4200`, then set `VITE_BACKEND_URL` / `VITE_SANDBOX_URL` to the ngrok HTTPS URL.
 *   **Pairing:** Open the `/adminportal` route, scan the QR code via WhatsApp Linked Devices, and securely pair your session.
 *   **Permissions:** Enable specific permissions (Read, Send, Groups) to let Voxx-Zero act autonomously on your behalf.
-*   **Security:** All WhatsApp sessions are isolated per user in the `.baileys_auth` directory and never exposed to the client browser.
+*   **History Mimicry:** Docker defaults `WA_SYNC_FULL_HISTORY=true`, `WA_HISTORY_LIMIT=50000`, and `WA_HISTORY_RESPONSE_LIMIT=2000` so Beatrice can inspect deep per-chat WhatsApp history and mimic the user's own `fromMe:true` style before previewing a send.
+*   **Security:** All WhatsApp sessions are isolated per user in `WA_AUTH_ROOT` (`/data/baileys` in Docker) and never exposed to the client browser.
+
+```bash
+cp .env.whatsapp.example .env.whatsapp
+npm run docker:whatsapp:build
+npm run docker:whatsapp:up
+npm run smoke:whatsapp
+ngrok http 4200
+```
 
 ## Document Generation
 

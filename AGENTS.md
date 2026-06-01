@@ -8,6 +8,9 @@ npm run dev:api   # Start backend Express server on port 4200, binds 0.0.0.0
 npm run dev:full  # Start both frontend and backend servers
 npm run build     # Production build via Vite
 npm run lint      # Typecheck only (tsc --noEmit)
+npm run docker:whatsapp:up    # Run WhatsApp backend in Docker on port 4200
+npm run docker:whatsapp:down  # Stop WhatsApp backend Docker stack
+npm run smoke:whatsapp        # Check /api/health for the backend
 ```
 
 There is no test framework, no CI, and no pre-commit hooks.
@@ -19,19 +22,21 @@ There is no test framework, no CI, and no pre-commit hooks.
 - Firebase config (`VITE_FIREBASE_*`), Google OAuth (`VITE_GOOGLE_CLIENT_ID`), and Supabase URL/key are typically `VITE_`-prefixed env vars.
 - `DISABLE_HMR=true` disables HMR (used in AI Studio to prevent flickering during agent edits). Keep this check in `vite.config.ts`.
 - `APP_URL` is injected by AI Studio at runtime for Cloud Run deployments. Do not hardcode a base URL.
-- `VITE_SANDBOX_URL` points to the backend server (default `http://localhost:4200`).
-- Server-only vars (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SANDBOX_PORT`, `SANDBOX_ROOT`, `WA_AUTH_ROOT`, `WA_LOG_LEVEL`) are read by `server/index.ts` via `dotenv/config`.
+- `VITE_SANDBOX_URL` / `VITE_BACKEND_URL` point to the backend server (default `http://localhost:4200`; set to the ngrok HTTPS URL when tunneling).
+- Server-only vars (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SANDBOX_PORT`, `SANDBOX_ROOT`, `WA_AUTH_ROOT`, `WA_LOG_LEVEL`, `WA_SYNC_FULL_HISTORY`, `WA_HISTORY_LIMIT`, `WA_HISTORY_RESPONSE_LIMIT`) are read by `server/index.ts` via `dotenv/config`.
 
 ## WhatsApp Integration (Backend)
 
-- **Base URL**: `http://whatsapp.eburon.ai`
+- **Base URL**: local Docker/server default `http://localhost:4200`; expose with `ngrok http 4200` when a public URL is needed. Do not hardcode the old VPS URL.
 - **Endpoints**:
+  - **Health**: `GET /api/health`
   - **QR Code**: `GET /api/whatsapp/qr/{userId}` (returns raw PNG)
-  - **Call History**: `/api/whatsapp/tool` (via `getCalls` tool)
+  - **Tool Execution**: `POST /api/whatsapp/tool`
+  - **Call History**: `POST /api/whatsapp/tool` with `tool=getCalls`
   - **Webhook Configuration**: `POST /api/whatsapp/admin/config` (to set `webhookUrl`)
-- **Documentation**:
-  - **Swagger UI**: `http://whatsapp.eburon.ai/docs/swagger`
-  - **OpenAPI JSON**: `http://whatsapp.eburon.ai/docs`
+- **Supported tools**: `readChats`, `getContacts`, `getGroups`, `getMessageHistory`, `getCalls`, `sendMessage`, `sendGroupMessage`, `sendMedia`, `sendAudio`, `sendReaction`, `sendButtons`.
+- **Delegated send rule**: outbound WhatsApp tools require `permissions.requireUserApproval=true`, `permissions.approvedByUser=true`, and `permissions.mode="delegated_send"`. Beatrice must preview the message and wait for `SEND`/`Approved` before sending.
+- **History mimicry**: `WA_SYNC_FULL_HISTORY=true` makes Baileys request desktop-style full history. Persist up to `WA_HISTORY_LIMIT` messages (default 50000) and allow `getMessageHistory` responses up to `WA_HISTORY_RESPONSE_LIMIT` (default 2000) so Beatrice can mimic the user's own `fromMe:true` WhatsApp style.
 
 Single-package Vite + React 19 + TypeScript app + optional Express backend (server/). Firebase handles auth and data, Gemini Live API handles the AI voice pipeline. The backend server provides WhatsApp integration (Baileys + Cloud API) and web glance API; run separately with `npx tsx server/index.ts`.
 

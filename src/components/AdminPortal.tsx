@@ -113,7 +113,7 @@ export function AdminPortal({ user, onBack, onLogout }: AdminPortalProps) {
       setHasAccessToken(!!config.hasAccessToken);
       setHasAppSecret(!!config.hasAppSecret);
       setHasWebhookVerifyToken(!!config.hasWebhookVerifyToken);
-      setPermissions({ ...emptyPermissions, ...(config.permissions || {}) });
+      setPermissions({ ...defaultPermissions, ...(config.permissions || {}) });
       setWaStatus(overview.status?.status || 'not_found');
       setWaPhone(overview.status?.phone || '');
       setQrCode(overview.status?.qrCode || '');

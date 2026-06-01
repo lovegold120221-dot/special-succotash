@@ -177,6 +177,23 @@ app.get('/api/whatsapp/status/:userId', async (req, res) => {
   }
 });
 
+app.get('/api/whatsapp/qr/:userId', async (req, res) => {
+  try {
+    const status = await waManager.getStatusOrStart(req.params.userId);
+    const qrCode = status?.qrCode;
+    if (!qrCode) {
+      res.status(404).send('QR not available');
+      return;
+    }
+
+    const base64 = qrCode.replace(/^data:image\/png;base64,/, '');
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('png').send(Buffer.from(base64, 'base64'));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to read WhatsApp QR' });
+  }
+});
+
 app.get('/api/whatsapp/messages/:userId', (req, res) => {
   const limit = parseInt(req.query.limit as string) || 20;
   const messages = waManager.getRecentMessages(req.params.userId, limit);
@@ -222,9 +239,51 @@ app.post('/api/whatsapp/tool', async (req, res) => {
           effectivePermissions, 
           params.to, 
           params.text, 
-          params.mediaUrl, 
-          params.mediaType, 
+          params.mediaUrl || params.url, 
+          params.mediaType || params.type, 
           params.caption
+        );
+        break;
+      case 'sendMedia':
+        result = await waTools.handleSendMedia(
+          waManager,
+          userId,
+          effectivePermissions,
+          params.to || params.chatId,
+          params.url || params.mediaUrl,
+          params.type || params.mediaType || 'image',
+          params.caption
+        );
+        break;
+      case 'sendAudio':
+        result = await waTools.handleSendAudio(
+          waManager,
+          userId,
+          effectivePermissions,
+          params.to || params.chatId,
+          params.url || params.mediaUrl,
+          params.ptt
+        );
+        break;
+      case 'sendReaction':
+        result = await waTools.handleSendReaction(
+          waManager,
+          userId,
+          effectivePermissions,
+          params.chatId || params.to,
+          params.messageId,
+          params.emoji
+        );
+        break;
+      case 'sendButtons':
+        result = await waTools.handleSendButtons(
+          waManager,
+          userId,
+          effectivePermissions,
+          params.to || params.chatId,
+          params.text,
+          Array.isArray(params.buttons) ? params.buttons : [],
+          params.footer
         );
         break;
       case 'readChats':
@@ -247,6 +306,9 @@ app.post('/api/whatsapp/tool', async (req, res) => {
         break;
       case 'getMessageHistory':
         result = await waTools.handleGetMessageHistory(waManager, userId, effectivePermissions, params.chatId || params.contactId || params.to || params.name, params.limit);
+        break;
+      case 'getCalls':
+        result = await waTools.handleGetCalls(waManager, userId, effectivePermissions, params.limit);
         break;
       default:
         res.status(400).json({ error: `Unknown tool: ${tool}` });
@@ -288,7 +350,11 @@ app.post('/api/whatsapp/admin/test-message', async (req, res) => {
   try {
     const { userId, to, text } = req.body;
     if (!userId || !to || !text) { res.status(400).json({ error: 'userId, to, text required' }); return; }
-    const permissions = waManager.getEffectivePermissions(userId);
+    const permissions = waManager.getEffectivePermissions(userId, {
+      requireUserApproval: true,
+      approvedByUser: true,
+      mode: 'delegated_send',
+    });
     const result = await waTools.handleSendMessage(waManager, userId, permissions, to, text);
     res.json(result);
   } catch (err: any) {

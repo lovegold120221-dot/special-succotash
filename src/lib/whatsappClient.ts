@@ -1,5 +1,30 @@
 const BACKEND_URL_KEY = 'beatrice_backend_url';
 
+export type WhatsAppTool =
+  | 'readChats'
+  | 'getContacts'
+  | 'getGroups'
+  | 'getMessageHistory'
+  | 'getCalls'
+  | 'sendMessage'
+  | 'sendGroupMessage'
+  | 'sendMedia'
+  | 'sendAudio'
+  | 'sendReaction'
+  | 'sendButtons';
+
+export type DelegatedSendPermissions = {
+  requireUserApproval: true;
+  approvedByUser: true;
+  mode: 'delegated_send';
+};
+
+export const DELEGATED_SEND_PERMISSIONS: DelegatedSendPermissions = {
+  requireUserApproval: true,
+  approvedByUser: true,
+  mode: 'delegated_send',
+};
+
 export function getBackendUrl(): string {
   const envUrl = (typeof import.meta !== 'undefined' && ((import.meta as any).env?.VITE_BACKEND_URL || (import.meta as any).env?.VITE_SANDBOX_URL)) || '';
   try {
@@ -22,10 +47,10 @@ export function getBackendUrl(): string {
 
   if (typeof window !== 'undefined') {
     const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname) || window.location.port === '3000' || window.location.hostname.startsWith('192.168.');
-    return isLocal ? `http://${window.location.hostname}:4200` : 'https://whatsapp.eburon.ai';
+    return isLocal ? `http://${window.location.hostname}:4200` : window.location.origin;
   }
 
-  return 'https://whatsapp.eburon.ai';
+  return 'http://localhost:4200';
 }
 
 export function setBackendUrl(url: string): string {
@@ -80,17 +105,17 @@ export async function sendWhatsAppMessage(
   userId: string,
   to: string,
   text: string,
-  permissions?: Record<string, boolean>,
+  permissions?: Record<string, any>,
 ): Promise<any> {
-  return requestJson('/api/whatsapp/send', {
-    method: 'POST',
-    body: JSON.stringify({ userId, to, text, permissions }),
+  return callWhatsAppTool(userId, 'sendMessage', { to, text }, {
+    ...permissions,
+    ...DELEGATED_SEND_PERMISSIONS,
   });
 }
 
 export async function callWhatsAppTool(
   userId: string,
-  tool: string,
+  tool: WhatsAppTool | string,
   params: Record<string, any>,
   permissions?: Record<string, any>,
 ): Promise<any> {

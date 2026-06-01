@@ -1,5 +1,6 @@
 import { Boom } from '@hapi/boom';
 import makeWASocket, {
+  Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
@@ -35,6 +36,16 @@ export interface WaRecentMessage {
   fromMe: boolean;
   isGroup: boolean;
   isMedia: boolean;
+}
+
+export interface WaCallRecord {
+  id: string;
+  chatId: string;
+  from: string;
+  timestamp: number;
+  status: string;
+  isVideo: boolean;
+  fromMe: boolean;
 }
 
 export interface WaChatSummary {
@@ -107,6 +118,7 @@ interface WaSession {
   dataFile: string;
   error: string | null;
   recentMessages: WaRecentMessage[];
+  calls: WaCallRecord[];
   contacts: Record<string, WaContactSummary>;
   messageById: Map<string, any>;
   reconnecting: boolean;
@@ -115,6 +127,9 @@ interface WaSession {
 }
 
 const logger = P({ level: process.env.WA_LOG_LEVEL || 'silent' });
+const MESSAGE_HISTORY_LIMIT = Math.max(250, Math.min(Number(process.env.WA_HISTORY_LIMIT) || 50_000, 250_000));
+const HISTORY_RESPONSE_LIMIT = Math.max(50, Math.min(Number(process.env.WA_HISTORY_RESPONSE_LIMIT) || 2_000, MESSAGE_HISTORY_LIMIT));
+const SYNC_FULL_HISTORY = process.env.WA_SYNC_FULL_HISTORY !== 'false';
 
 function ensureDir(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
@@ -168,6 +183,7 @@ function timestampMs(value: any): number {
   if (!value) return Date.now();
   if (typeof value === 'number') return value > 10_000_000_000 ? value : value * 1000;
   if (typeof value?.toNumber === 'function') return value.toNumber() * 1000;
+  if (value instanceof Date) return value.getTime();
   return Date.now();
 }
 
@@ -186,25 +202,57 @@ function jidNumber(jid: string): string {
   return jid.split('@')[0] || jid;
 }
 
-function readSessionData(dataFile: string): Pick<WaSession, 'recentMessages' | 'contacts'> {
+function readSessionData(dataFile: string): Pick<WaSession, 'recentMessages' | 'calls' | 'contacts'> {
   try {
-    if (!fs.existsSync(dataFile)) return { recentMessages: [], contacts: {} };
+    if (!fs.existsSync(dataFile)) return { recentMessages: [], calls: [], contacts: {} };
     const parsed = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
     return {
       recentMessages: Array.isArray(parsed.recentMessages) ? parsed.recentMessages : [],
+      calls: Array.isArray(parsed.calls) ? parsed.calls : [],
       contacts: parsed.contacts && typeof parsed.contacts === 'object' ? parsed.contacts : {},
     };
   } catch {
-    return { recentMessages: [], contacts: {} };
+    return { recentMessages: [], calls: [], contacts: {} };
   }
 }
 
 function writeSessionData(entry: WaSession) {
   const payload = {
-    recentMessages: entry.recentMessages.slice(0, 250),
+    recentMessages: entry.recentMessages.slice(0, MESSAGE_HISTORY_LIMIT),
+    calls: entry.calls.slice(0, 100),
     contacts: entry.contacts,
   };
   fs.writeFileSync(entry.dataFile, JSON.stringify(payload, null, 2));
+}
+
+function storeMessage(entry: WaSession, msg: any): WaRecentMessage | null {
+  const chatId = msg.key?.remoteJid || '';
+  if (!chatId || chatId === 'status@broadcast') return null;
+
+  const id = msg.key?.id || `${chatId}:${Date.now()}`;
+  if (msg.key?.id) entry.messageById.set(`${chatId}:${msg.key.id}`, msg);
+
+  const body = messageText(msg) || '[media]';
+  const record: WaRecentMessage = {
+    id,
+    chatId,
+    from: msg.key?.participant || msg.key?.remoteJid || '',
+    body: body.slice(0, 1000),
+    timestamp: timestampMs(msg.messageTimestamp),
+    fromMe: !!msg.key?.fromMe,
+    isGroup: chatId.endsWith('@g.us'),
+    isMedia: !!msg.message?.imageMessage || !!msg.message?.videoMessage || !!msg.message?.documentMessage || !!msg.message?.audioMessage,
+  };
+
+  const existingIndex = entry.recentMessages.findIndex(message => message.id === record.id && message.chatId === record.chatId);
+  if (existingIndex >= 0) entry.recentMessages.splice(existingIndex, 1);
+
+  entry.recentMessages.unshift(record);
+  if (entry.recentMessages.length > MESSAGE_HISTORY_LIMIT) {
+    entry.recentMessages.length = MESSAGE_HISTORY_LIMIT;
+  }
+
+  return record;
 }
 
 export class WhatsAppManager {
@@ -317,6 +365,7 @@ export class WhatsAppManager {
         dataFile,
         error: null,
         recentMessages: savedData.recentMessages,
+        calls: savedData.calls,
         contacts: savedData.contacts,
         messageById: new Map(),
         reconnecting: false,
@@ -341,6 +390,7 @@ export class WhatsAppManager {
 
       const sock = makeWASocket({
         version,
+        browser: Browsers.macOS('Desktop'),
         logger,
         auth: {
           creds: state.creds,
@@ -348,7 +398,7 @@ export class WhatsAppManager {
         },
         generateHighQualityLinkPreview: true,
         markOnlineOnConnect: false,
-        syncFullHistory: false,
+        syncFullHistory: SYNC_FULL_HISTORY,
         getMessage: async (key) => {
           const jid = key.remoteJid;
           const id = key.id;
@@ -429,38 +479,42 @@ export class WhatsAppManager {
         if (this.sessions.get(userId) !== entry) return;
 
         for (const msg of messages || []) {
-          const chatId = msg.key?.remoteJid || '';
-          if (!chatId || chatId === 'status@broadcast') continue;
-          if (msg.key?.id) entry.messageById.set(`${chatId}:${msg.key.id}`, msg);
-
-          const body = messageText(msg) || '[media]';
-          const record: WaRecentMessage = {
-            id: msg.key?.id || `${chatId}:${Date.now()}`,
-            chatId,
-            from: msg.key?.participant || msg.key?.remoteJid || '',
-            body: body.slice(0, 1000),
-            timestamp: timestampMs(msg.messageTimestamp),
-            fromMe: !!msg.key?.fromMe,
-            isGroup: chatId.endsWith('@g.us'),
-            isMedia: !!msg.message?.imageMessage || !!msg.message?.videoMessage || !!msg.message?.documentMessage,
-          };
-          entry.recentMessages.unshift(record);
+          const record = storeMessage(entry, msg);
+          if (!record) continue;
 
           // Capture public profile name (pushName) from incoming messages to pair it with the JID
-          if (chatId && chatId.endsWith('@s.whatsapp.net') && msg.pushName) {
-            const existing = entry.contacts[chatId];
-            const savedName = existing?.name && existing.name !== chatId ? existing.name : '';
+          if (record.chatId.endsWith('@s.whatsapp.net') && msg.pushName) {
+            const existing = entry.contacts[record.chatId];
+            const savedName = existing?.name && existing.name !== record.chatId ? existing.name : '';
             const notifyName = msg.pushName || existing?.notify || '';
-            entry.contacts[chatId] = {
-              id: chatId,
-              name: savedName || notifyName || chatId,
+            entry.contacts[record.chatId] = {
+              id: record.chatId,
+              name: savedName || notifyName || record.chatId,
               notify: notifyName || undefined,
               verifiedName: existing?.verifiedName || undefined,
-              number: jidNumber(chatId),
+              number: jidNumber(record.chatId),
             };
           }
         }
-        entry.recentMessages = entry.recentMessages.slice(0, 250);
+      });
+
+      sock.ev.on('call', (calls: any[]) => {
+        if (this.sessions.get(userId) !== entry) return;
+
+        for (const call of calls || []) {
+          const chatId = String(call.from || call.chatId || call.remoteJid || '');
+          entry.calls.unshift({
+            id: String(call.id || `${chatId}:${Date.now()}`),
+            chatId,
+            from: chatId,
+            timestamp: timestampMs(call.date || call.timestamp || call.creation),
+            status: String(call.status || call.reason || 'unknown'),
+            isVideo: !!call.isVideo,
+            fromMe: !!call.fromMe,
+          });
+        }
+
+        entry.calls = entry.calls.slice(0, 100);
       });
 
       const updateContacts = (contacts: any[]) => {
@@ -484,8 +538,22 @@ export class WhatsAppManager {
         }
       };
 
-      sock.ev.on('messaging-history.set', ({ contacts }: any) => {
+      sock.ev.on('messaging-history.set', ({ contacts, messages, progress, syncType, isLatest }: any) => {
         updateContacts(contacts || []);
+        for (const msg of messages || []) {
+          storeMessage(entry, msg);
+        }
+
+        entry.recentMessages.sort((a, b) => b.timestamp - a.timestamp);
+        if (entry.recentMessages.length > MESSAGE_HISTORY_LIMIT) {
+          entry.recentMessages.length = MESSAGE_HISTORY_LIMIT;
+        }
+        writeSessionData(entry);
+
+        console.log(`[WhatsApp] History sync for ${userId}: +${(messages || []).length} messages, +${(contacts || []).length} contacts, progress=${progress ?? 'n/a'}, syncType=${syncType ?? 'n/a'}, latest=${isLatest ?? 'n/a'}`);
+      });
+      sock.ev.on('messaging-history.status', ({ status, syncType, explicit }: any) => {
+        console.log(`[WhatsApp] History sync ${status} for ${userId}: syncType=${syncType}, explicit=${explicit}`);
       });
       sock.ev.on('contacts.upsert', updateContacts);
       sock.ev.on('contacts.update', updateContacts);
@@ -567,10 +635,26 @@ export class WhatsAppManager {
     return this.getAdminConfigPublic(userId);
   }
 
-  getEffectivePermissions(userId: string, requestPermissions?: Record<string, boolean>): Record<string, boolean> {
+  getEffectivePermissions(userId: string, requestPermissions?: Record<string, any>): Record<string, any> {
     const config = this.readAdminConfig(userId);
-    if (config.updatedAt) return config.permissions;
-    return requestPermissions || config.permissions;
+    const requestContext = requestPermissions || {};
+    const approvalContext = {
+      requireUserApproval: requestContext.requireUserApproval,
+      approvedByUser: requestContext.approvedByUser,
+      mode: requestContext.mode,
+    };
+
+    if (config.updatedAt) {
+      return {
+        ...config.permissions,
+        ...approvalContext,
+      };
+    }
+
+    return {
+      ...config.permissions,
+      ...requestContext,
+    };
   }
 
   async sendCloudTextMessage(userId: string, to: string, text: string): Promise<{ chatId: string; messageId?: string } | null> {
@@ -658,6 +742,7 @@ export class WhatsAppManager {
         dataFile,
         error: null,
         recentMessages: savedData.recentMessages,
+        calls: savedData.calls,
         contacts: savedData.contacts,
         messageById: new Map(),
         reconnecting: false,
@@ -688,7 +773,7 @@ export class WhatsAppManager {
       }
     }
 
-    entry.recentMessages = entry.recentMessages.slice(0, 250);
+    entry.recentMessages = entry.recentMessages.slice(0, MESSAGE_HISTORY_LIMIT);
     writeSessionData(entry);
     return { accepted };
   }
@@ -701,7 +786,13 @@ export class WhatsAppManager {
   getRecentMessages(userId: string, limit = 20): WaRecentMessage[] {
     const entry = this.sessions.get(userId);
     if (!entry) return [];
-    return entry.recentMessages.slice(0, Math.min(limit, 50));
+    return entry.recentMessages.slice(0, Math.min(limit, HISTORY_RESPONSE_LIMIT));
+  }
+
+  getCalls(userId: string, limit = 20): WaCallRecord[] {
+    const entry = this.sessions.get(userId);
+    if (!entry) return [];
+    return entry.calls.slice(0, Math.min(limit, 50));
   }
 
   getChats(userId: string, limit = 20): WaChatSummary[] {
@@ -725,7 +816,7 @@ export class WhatsAppManager {
 
     return [...byId.values()]
       .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, Math.min(limit, 50));
+      .slice(0, Math.min(limit, 100));
   }
 
   getContacts(userId: string, limit = 100): WaContactSummary[] {
@@ -812,7 +903,7 @@ export class WhatsAppManager {
     const jid = toWhatsAppJid(chatId, chatId.endsWith('@g.us'));
     return entry.recentMessages
       .filter(message => message.chatId === jid)
-      .slice(0, Math.min(limit, 50));
+      .slice(0, Math.min(limit, HISTORY_RESPONSE_LIMIT));
   }
 
   async disconnect(userId: string): Promise<void> {

@@ -10,7 +10,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "docker:whatsapp:build": "docker compose -f docker-compose.whatsapp.yml build",
+    "docker:whatsapp:up": "docker compose -f docker-compose.whatsapp.yml up",
+    "docker:whatsapp:down": "docker compose -f docker-compose.whatsapp.yml down",
+    "smoke:whatsapp": "node scripts/smoke-whatsapp-server.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
