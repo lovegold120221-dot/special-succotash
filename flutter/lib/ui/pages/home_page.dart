@@ -6,6 +6,7 @@ import '../../core/gemini/provider.dart';
 import '../../core/audio/provider.dart';
 import '../widgets/cloud_visualizer.dart';
 import 'settings_page.dart';
+import 'website_viewer_page.dart';
 
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
@@ -15,6 +16,18 @@ class HomePage extends ConsumerWidget {
     final geminiState = ref.watch(geminiLiveProvider);
     final recorderFreqs = ref.watch(recorderFrequenciesProvider);
     
+    // Listen for website generation
+    ref.listen(activeWebsiteUrlProvider, (previous, next) {
+      if (next != null) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => WebsiteViewerPage(url: next)),
+        );
+        // Reset provider so it doesn't trigger again on back
+        ref.read(activeWebsiteUrlProvider.notifier).state = null;
+      }
+    });
+
     // Calculate average and peak for visualizer
     final avg = recorderFreqs.reduce((a, b) => a + b) / recorderFreqs.length;
     final peak = recorderFreqs.isNotEmpty ? recorderFreqs.reduce((a, b) => a > b ? a : b) : 0.0;

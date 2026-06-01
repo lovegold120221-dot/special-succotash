@@ -3,6 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'client.dart';
 import '../audio/provider.dart';
 import '../config.dart';
+import '../../services/firebase_service.dart';
+import '../../services/http_service.dart';
+
+final firebaseServiceProvider = Provider((ref) => FirebaseService());
+final httpServiceProvider = Provider((ref) => HttpService());
+final activeWebsiteUrlProvider = StateProvider<String?>((ref) => null);
 
 class GeminiLiveClientState {
   final bool isConnected;
@@ -122,19 +128,53 @@ class GeminiLiveClientNotifier extends Notifier<GeminiLiveClientState> implement
       );
     }
   }
+@override
+void onToolCall(List<Map<String, dynamic>> functionCalls) {
+  print('Tool Call received: $functionCalls');
 
-  @override
-  void onToolCall(List<Map<String, dynamic>> functionCalls) {
-    print('Tool Call received: $functionCalls');
-    
-    final responses = functionCalls.map((call) => {
-      'id': call['id'],
-      'name': call['name'],
-      'response': {'result': 'Tool ${call['name']} executed in Flutter'}
-    }).toList();
-    
-    _client.sendToolResponse(responses);
+  for (var call in functionCalls) {
+    if (call['name'] == 'create_website') {
+      _handleCreateWebsite(call);
+    }
   }
+
+  // Placeholder response
+  final responses = functionCalls.map((call) => {
+    'id': call['id'],
+    'name': call['name'],
+    'response': {'result': 'Tool ${call['name']} execution started'}
+  }).toList();
+
+  _client.sendToolResponse(responses);
+}
+
+Future<void> _handleCreateWebsite(Map<String, dynamic> call) async {
+  final args = call['args'];
+  final title = args['title'] ?? 'Website';
+  final prompt = args['prompt'] ?? '';
+  final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+  final userId = ref.read(firebaseServiceProvider).currentUser?.uid ?? 'anon';
+
+  try {
+    final response = await ref.read(httpServiceProvider).post(
+      '${AppConfig.backendUrl}/api/website/generate',
+      body: {
+        'userId': userId,
+        'title': title,
+        'prompt': prompt,
+        'timestamp': timestamp,
+      },
+    );
+
+    if (response['ok'] == true) {
+      final url = '${AppConfig.backendUrl}${response['slug']}';
+      // Notify UI to show website viewer (we'll add a provider for this)
+      ref.read(activeWebsiteUrlProvider.notifier).state = url;
+    }
+  } catch (e) {
+    print('Website generation error in Flutter: $e');
+  }
+}
 
   @override
   void onError(dynamic error) {

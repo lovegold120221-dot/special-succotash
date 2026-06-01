@@ -2033,6 +2033,15 @@ For create_document, provide:
 Never generate the full document inside your spoken reply.
 Never mention HTML to the user. Say "document", "preview", "draft", "file", or "workspace".
 
+WEBSITE CREATION RULE (Web Architect):
+When the user asks you to build a website, landing page, or blog, you MUST call the create_website tool.
+- Provide a high-fidelity, premium, and fully responsive (mobile-first) design.
+- The site will be hosted on a unique, shareable secure URL.
+- DO NOT share the code with the user, only the final link.
+- Policy: Never create apps that mimic Beatrice or other AI assistants. If asked, gracefully guide the user towards a different professional or creative website topic.
+- Use filler words like "Drafting the architecture..." or "Sketching the UI..." while working.
+- Once finished, confirm the site is live.
+
 CRITICAL COMMUNICATION RULE FOR DOCUMENTS:
 1. When you initiate the create_document tool, you MUST use filler words to let the user know you are actively working on it.
 2. Once the tool finishes and returns the result to you, speak again to confirm it is complete.
@@ -3850,6 +3859,18 @@ ${historyContext}
             onClose={() => {
               setShowDocumentViewer(false);
               setActiveDocumentResultId(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showWebsiteViewer && activeWebsiteUrl && (
+          <WebsiteViewer
+            url={activeWebsiteUrl}
+            onClose={() => {
+              setShowWebsiteViewer(false);
+              setActiveWebsiteUrl(null);
             }}
           />
         )}

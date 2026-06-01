@@ -50,6 +50,7 @@ dependencies:
   lucide_icons: ^0.257.0
   flutter_sound: ^9.30.0
   flutter_svg: ^2.3.0
+  webview_flutter: ^4.13.1
 
 dev_dependencies:
   flutter_test:
