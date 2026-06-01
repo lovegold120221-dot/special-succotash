@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.git/
+.env
+client.json
+.baileys_auth/
+scratch/
+.DS_Store
