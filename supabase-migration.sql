@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   language TEXT DEFAULT 'en',
   avatar_url TEXT,
   knowledge_domains TEXT[] DEFAULT '{}',
-  whatsapp_permissions JSONB DEFAULT '{"send_messages":false,"read_chats":false,"access_contacts":false,"manage_contacts":false,"access_groups":false,"send_group_messages":false,"read_group_chats":false,"manage_media":false,"view_message_history":false}'::jsonb,
+  whatsapp_permissions JSONB DEFAULT '{"send_messages":true,"read_chats":true,"access_contacts":true,"manage_contacts":true,"access_groups":true,"send_group_messages":true,"read_group_chats":true,"manage_media":true,"view_message_history":true}'::jsonb,
   whatsapp_paired BOOLEAN DEFAULT false,
   whatsapp_phone TEXT,
   updated_at TIMESTAMPTZ DEFAULT now()
@@ -51,7 +51,7 @@ ALTER TABLE knowledge_files DISABLE ROW LEVEL SECURITY;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS user_title TEXT DEFAULT 'Boss';
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'en';
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS knowledge_domains TEXT[] DEFAULT '{}';
-ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS whatsapp_permissions JSONB DEFAULT '{"send_messages":false,"read_chats":false,"access_contacts":false,"manage_contacts":false,"access_groups":false,"send_group_messages":false,"read_group_chats":false,"manage_media":false,"view_message_history":false}'::jsonb;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS whatsapp_permissions JSONB DEFAULT '{"send_messages":true,"read_chats":true,"access_contacts":true,"manage_contacts":true,"access_groups":true,"send_group_messages":true,"read_group_chats":true,"manage_media":true,"view_message_history":true}'::jsonb;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS whatsapp_paired BOOLEAN DEFAULT false;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS whatsapp_phone TEXT;
 

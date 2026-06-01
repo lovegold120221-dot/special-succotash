@@ -50,8 +50,8 @@ const permissionOptions: { key: PermissionKey; label: string; note: string }[] =
   { key: 'view_message_history', label: 'View history', note: 'Allows message lookup by chat ID.' },
 ];
 
-const emptyPermissions = permissionOptions.reduce((acc, item) => {
-  acc[item.key] = false;
+const defaultPermissions = permissionOptions.reduce((acc, item) => {
+  acc[item.key] = true;
   return acc;
 }, {} as Record<PermissionKey, boolean>);
 
@@ -75,7 +75,7 @@ export function AdminPortal({ user, onBack, onLogout }: AdminPortalProps) {
   const [hasAccessToken, setHasAccessToken] = useState(false);
   const [hasAppSecret, setHasAppSecret] = useState(false);
   const [hasWebhookVerifyToken, setHasWebhookVerifyToken] = useState(false);
-  const [permissions, setPermissions] = useState<Record<PermissionKey, boolean>>(emptyPermissions);
+  const [permissions, setPermissions] = useState<Record<PermissionKey, boolean>>(defaultPermissions);
   const [waStatus, setWaStatus] = useState('not_found');
   const [waPhone, setWaPhone] = useState('');
   const [qrCode, setQrCode] = useState('');

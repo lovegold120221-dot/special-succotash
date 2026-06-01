@@ -26,6 +26,10 @@ export class AudioStreamer {
     this.activeSources = [];
   }
 
+  getAudioContext() {
+    return this.audioContext;
+  }
+
   getFrequencies(numBins: number = 5): number[] {
     if (!this.analyser || !this.dataArray) return Array(numBins).fill(0);
     this.analyser.getByteFrequencyData(this.dataArray as any);
@@ -43,25 +47,32 @@ export class AudioStreamer {
 
   addPCM16(base64: string) {
     if (!this.audioContext) return;
+    
     const binary = atob(base64);
-    const buffer = new ArrayBuffer(binary.length);
-    const view = new DataView(buffer);
-    for (let i = 0; i < binary.length; i++) {
-        view.setUint8(i, binary.charCodeAt(i));
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i);
     }
-    const int16Array = new Int16Array(buffer);
+    
+    const int16Array = new Int16Array(bytes.buffer);
     const float32Array = new Float32Array(int16Array.length);
+    
     for (let i = 0; i < int16Array.length; i++) {
-        float32Array[i] = int16Array[i] / (int16Array[i] < 0 ? 0x8000 : 0x7FFF);
+      float32Array[i] = int16Array[i] / 32768.0;
     }
+    
     this.queue.push(float32Array);
     this.drainQueue();
   }
 
   private drainQueue() {
-    if (!this.audioContext) return;
+    if (!this.audioContext || this.audioContext.state === 'suspended') return;
+    
     while (this.queue.length > 0) {
       const chunk = this.queue.shift()!;
+      if (chunk.length === 0) continue;
+
       const audioBuffer = this.audioContext.createBuffer(1, chunk.length, this.sampleRate);
       audioBuffer.getChannelData(0).set(chunk);
       
@@ -71,14 +82,17 @@ export class AudioStreamer {
       
       const currentTime = this.audioContext.currentTime;
       if (this.scheduledTime < currentTime) {
-        this.scheduledTime = currentTime + 0.01; // Reduced safety buffer from 0.02 to 0.01
+        this.scheduledTime = currentTime + 0.1;
       }
       
       source.start(this.scheduledTime);
       this.scheduledTime += audioBuffer.duration;
       
       source.onended = () => {
-        this.activeSources = this.activeSources.filter(s => s !== source);
+        const index = this.activeSources.indexOf(source);
+        if (index > -1) {
+          this.activeSources.splice(index, 1);
+        }
       };
       this.activeSources.push(source);
     }

@@ -826,16 +826,16 @@ export function BeatriceAgent({
   const [waPhone, setWaPhone] = useState<string | null>(null);
   const [waPairing, setWaPairing] = useState(false);
   const [waPermissions, setWaPermissions] = useState<Record<string, boolean>>({
-    send_messages: false,
-    read_chats: false,
-    access_contacts: false,
-    manage_contacts: false,
-    access_groups: false,
-    send_group_messages: false,
-    read_group_chats: false,
-    view_message_history: false,
-    make_calls: false,
-    make_whatsapp_calls: false,
+    send_messages: true,
+    read_chats: true,
+    access_contacts: true,
+    manage_contacts: true,
+    access_groups: true,
+    send_group_messages: true,
+    read_group_chats: true,
+    view_message_history: true,
+    make_calls: true,
+    make_whatsapp_calls: true,
   });
   const waPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -901,6 +901,11 @@ export function BeatriceAgent({
     }
 
     await audioStreamerRef.current.init(24000);
+    
+    // Explicitly resume for mobile browser compliance
+    if (audioStreamerRef.current.getAudioContext()?.state === 'suspended') {
+      await audioStreamerRef.current.getAudioContext()?.resume();
+    }
   };
 
   const ambientGainFromLevel = useCallback((level: number) => {

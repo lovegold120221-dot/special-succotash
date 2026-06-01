@@ -15,6 +15,7 @@ import { EntryFlow } from './components/EntryFlow';
 import { AuthPage } from './components/AuthPage';
 import { BeatriceAgent } from './components/BeatriceAgent';
 import { AdminPortal } from './components/AdminPortal';
+import { InstallBanner } from './components/InstallBanner';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -172,37 +173,34 @@ export default function App() {
     );
   }
 
-  if (showEntryFlow) {
-    return <EntryFlow onComplete={() => setShowEntryFlow(false)} />;
-  }
-
-  if (!user) {
-    return <AuthPage onGoogleToken={handleGoogleToken} onLogin={handleLogin} />;
-  }
-
   const isAdminPortal = typeof window !== 'undefined'
     && window.location.pathname.replace(/\/+$/, '') === '/adminportal';
 
-  if (isAdminPortal) {
-    return (
-      <AdminPortal
-        user={user}
-        onBack={() => { window.location.href = '/'; }}
-        onLogout={handleLogout}
-      />
-    );
-  }
-
   return (
-    <BeatriceAgent
-      user={user}
-      googleToken={googleToken}
-      setGoogleToken={setGoogleToken}
-      storeToken={storeToken}
-      authLanguage={authLanguage}
-      onSetLanguage={setAuthLanguage}
-      onLogout={handleLogout}
-      onLogin={handleLogin}
-    />
+    <>
+      <InstallBanner />
+      {showEntryFlow ? (
+        <EntryFlow onComplete={() => setShowEntryFlow(false)} />
+      ) : !user ? (
+        <AuthPage onGoogleToken={handleGoogleToken} onLogin={handleLogin} />
+      ) : isAdminPortal ? (
+        <AdminPortal
+          user={user}
+          onBack={() => { window.location.href = '/'; }}
+          onLogout={handleLogout}
+        />
+      ) : (
+        <BeatriceAgent
+          user={user}
+          googleToken={googleToken}
+          setGoogleToken={setGoogleToken}
+          storeToken={storeToken}
+          authLanguage={authLanguage}
+          onSetLanguage={setAuthLanguage}
+          onLogout={handleLogout}
+          onLogin={handleLogin}
+        />
+      )}
+    </>
   );
 }
