@@ -5,6 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../core/gemini/provider.dart';
 import '../../core/audio/provider.dart';
 import '../widgets/cloud_visualizer.dart';
+import '../widgets/visualizer_bars.dart';
 import 'settings_page.dart';
 import 'website_viewer_page.dart';
 
@@ -24,7 +25,7 @@ class HomePage extends ConsumerWidget {
           MaterialPageRoute(builder: (context) => WebsiteViewerPage(url: next)),
         );
         // Reset provider so it doesn't trigger again on back
-        ref.read(activeWebsiteUrlProvider.notifier).state = null;
+        ref.read(activeWebsiteUrlProvider.notifier).url = null;
       }
     });
 
@@ -84,38 +85,52 @@ class HomePage extends ConsumerWidget {
                   onPressed: () {},
                 ),
                 
-                // Main Activation Button
-                GestureDetector(
-                  onTap: () {
-                    if (geminiState.isConnected) {
-                      ref.read(geminiLiveProvider.notifier).stopSession();
-                    } else {
-                      ref.read(geminiLiveProvider.notifier).startSession();
-                    }
-                  },
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: geminiState.isConnected ? Colors.red.withOpacity(0.1) : Colors.white.withOpacity(0.05),
-                      border: Border.all(
-                        color: geminiState.isConnected ? Colors.red.withOpacity(0.5) : Colors.white10,
-                        width: 1,
+                // Main Activation Button with Visualizer Bars
+                Row(
+                  children: [
+                    if (geminiState.isConnected)
+                      VisualizerBars(volumes: recorderFreqs.take(5).toList(), isLeft: true, maxHeight: 32),
+                    
+                    const SizedBox(width: 8),
+                    
+                    GestureDetector(
+                      onTap: () {
+                        if (geminiState.isConnected) {
+                          ref.read(geminiLiveProvider.notifier).stopSession();
+                        } else {
+                          ref.read(geminiLiveProvider.notifier).startSession();
+                        }
+                      },
+                      child: Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: geminiState.isConnected ? Colors.red.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+                          border: Border.all(
+                            color: geminiState.isConnected ? Colors.red.withOpacity(0.5) : Colors.white10,
+                            width: 1,
+                          ),
+                        ),
+                        child: Center(
+                          child: Icon(
+                            geminiState.isConnected ? LucideIcons.square : LucideIcons.mic,
+                            color: geminiState.isConnected ? Colors.red : Colors.white,
+                            size: 32,
+                          ),
+                        ),
                       ),
-                    ),
-                    child: Center(
-                      child: Icon(
-                        geminiState.isConnected ? LucideIcons.square : LucideIcons.mic,
-                        color: geminiState.isConnected ? Colors.red : Colors.white,
-                        size: 32,
-                      ),
-                    ),
-                  ),
-                ).animate(target: geminiState.isConnected ? 1 : 0)
-                 .scale(begin: const Offset(1, 1), end: const Offset(1.1, 1.1), duration: 2.seconds, curve: Curves.easeInOut)
-                 .then()
-                 .scale(begin: const Offset(1.1, 1.1), end: const Offset(1, 1)),
+                    ).animate(target: geminiState.isConnected ? 1 : 0)
+                     .scale(begin: const Offset(1, 1), end: const Offset(1.1, 1.1), duration: 2.seconds, curve: Curves.easeInOut)
+                     .then()
+                     .scale(begin: const Offset(1.1, 1.1), end: const Offset(1, 1)),
+                    
+                    const SizedBox(width: 8),
+                    
+                    if (geminiState.isConnected)
+                      VisualizerBars(volumes: recorderFreqs.skip(5).take(5).toList(), maxHeight: 32),
+                  ],
+                ),
 
                 _IconButton(
                   icon: LucideIcons.video,

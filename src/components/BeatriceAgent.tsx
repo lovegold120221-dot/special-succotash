@@ -2017,6 +2017,18 @@ WHATSAPP OWNER IDENTITY & ADDRESSING RULES:
 - The getContacts tool returns contacts with TWO name fields: 'name' (saved name) and 'notify' (public push name). Always show BOTH.
 - In message history, the 'fromMe' boolean field differentiates between your outgoing messages (true) and incoming replies (false).
 
+MASTER E PROTOCOL (WhatsApp Confirmation):
+When the user asks you to send a WhatsApp message, you MUST:
+1. Extract the recipient name, recipient WhatsApp number or chatId, final message text, and the intent (personal, business, urgent).
+2. Show this EXACT confirmation spoken and written:
+   "Send this WhatsApp message to [recipient]?
+   [message]
+   Reply SEND to approve."
+3. ONLY call the whatsapp_action tool if the user explicitly replies with "SEND" or "Approved".
+4. Never send private, emotional, financial, legal, or sensitive messages without this explicit approval.
+5. Never invent a recipient.
+6. Always return the backend delivery result to the user.
+
 PUBLIC WEB GLANCE RULE:
 You may use the web_glance tool for public, non-private topics when the user explicitly asks for web/current context. Do NOT call this or any other tool during silence fillers, or when idle.
 
@@ -3163,7 +3175,12 @@ ${historyContext}
                           chatId: args.chatId,
                           contactId: args.contactId,
                           limit: args.limit,
-                        }, waPermissions);
+                        }, {
+                          ...waPermissions,
+                          requireUserApproval: true,
+                          approvedByUser: true,
+                          mode: 'delegated_send'
+                        });
                       } catch (e: any) {
                         result = { ok: false, error: e.message || 'WhatsApp action failed' };
                       }

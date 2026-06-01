@@ -92,7 +92,7 @@ export async function callWhatsAppTool(
   userId: string,
   tool: string,
   params: Record<string, any>,
-  permissions?: Record<string, boolean>,
+  permissions?: Record<string, any>,
 ): Promise<any> {
   return requestJson('/api/whatsapp/tool', {
     method: 'POST',

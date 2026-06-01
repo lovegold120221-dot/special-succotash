@@ -144,6 +144,8 @@ class GeminiLiveClientNotifier extends Notifier<GeminiLiveClientState> implement
     for (var call in functionCalls) {
       if (call['name'] == 'create_website') {
         _handleCreateWebsite(call);
+      } else if (call['name'] == 'whatsapp_action') {
+        _handleWhatsAppAction(call);
       }
     }
 
@@ -155,6 +157,29 @@ class GeminiLiveClientNotifier extends Notifier<GeminiLiveClientState> implement
     }).toList();
 
     _client.sendToolResponse(responses);
+  }
+
+  Future<void> _handleWhatsAppAction(Map<String, dynamic> call) async {
+    final args = call['args'];
+    final userId = ref.read(firebaseServiceProvider).currentUser?.uid ?? 'anon';
+
+    try {
+      await ref.read(httpServiceProvider).post(
+        '${AppConfig.backendUrl}/api/whatsapp/tool',
+        body: {
+          'userId': userId,
+          'tool': args['action'],
+          'params': args,
+          'permissions': {
+            'requireUserApproval': true,
+            'approvedByUser': true,
+            'mode': 'delegated_send'
+          },
+        },
+      );
+    } catch (e) {
+      print('WhatsApp action error in Flutter: $e');
+    }
   }
 
   Future<void> _handleCreateWebsite(Map<String, dynamic> call) async {
