@@ -78,7 +78,7 @@ export function InstallBanner() {
               <div className="flex-grow">
                 <h3 className="text-white font-semibold text-sm">Install Beatrice</h3>
                 <p className="text-amber-500/60 text-xs mt-0.5 leading-relaxed">
-                  Add to your home screen for a seamless voice experience.
+                  Eburon AI Voice Intelligence
                 </p>
               </div>
 
